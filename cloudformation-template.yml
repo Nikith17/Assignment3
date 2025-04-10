@@ -12,9 +12,10 @@ Parameters:
   InstanceType:
     Type: String
     Default: t3.micro
+
 Resources:
   # Create a Custom VPC
-  MyVPC:
+  DonthiVPC:
     Type: AWS::EC2::VPC
     Properties:
       CidrBlock: '10.0.0.0/16'
@@ -23,143 +24,153 @@ Resources:
           Value: !Ref VPCName
 
   # Create Public Subnet
-  PublicSubnet:
+  DonthiPublicSubnet:
     Type: AWS::EC2::Subnet
     Properties:
-      VpcId: !Ref MyVPC
+      VpcId: !Ref DonthiVPC
       CidrBlock: !Ref SubnetCIDRPublic
       AvailabilityZone: us-east-1a
       MapPublicIpOnLaunch: true
-
-  # Create Private Subnet
-  PrivateSubnet:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref MyVPC
-      CidrBlock: !Ref SubnetCIDRPrivate
-      AvailabilityZone: us-east-1a
-
-  # Create Internet Gateway
-  MyInternetGateway:
-    Type: AWS::EC2::InternetGateway
-    Properties: 
       Tags:
         - Key: Name
-          Value: MyInternetGateway
+          Value: "Public-Subnet-Donthi"
 
-  # Attach Internet Gateway to VPC
-  AttachInternetGateway:
+  # Create Private Subnet
+  DonthiPrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DonthiVPC
+      CidrBlock: !Ref SubnetCIDRPrivate
+      AvailabilityZone: us-east-1a
+      Tags:
+        - Key: Name
+          Value: "Private-Subnet-Donthi"
+
+  # Create Internet Gateway
+  DonthiInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: "Internet-Gateway-Donthi"
+
+  # Attach Internet Gateway to the VPC
+  DonthiAttachGateway:
     Type: AWS::EC2::VPCGatewayAttachment
     Properties:
-      VpcId: !Ref MyVPC
-      InternetGatewayId: !Ref MyInternetGateway
+      VpcId: !Ref DonthiVPC
+      InternetGatewayId: !Ref DonthiInternetGateway
 
-  # Create ECS Cluster
-  ECSCluster:
-    Type: AWS::ECS::Cluster
-    Properties:
-      ClusterName: ECSCluster-Donthi
-
-  # Create ECS Task Definition
-  ECSContainerDefinition:
-    Type: AWS::ECS::TaskDefinition
-    Properties:
-      Family: ECSFlaskApp-Donthi
-      ExecutionRoleArn: arn:aws:iam::123456789012:role/ecsTaskExecutionRole
-      ContainerDefinitions:
-        - Name: flask-app
-          Image: "897729119415.dkr.ecr.us-east-1.amazonaws.com/donthiapp:latest"
-          Memory: 512
-          Cpu: 256
-          PortMappings:
-            - ContainerPort: 80
-              HostPort: 80
-          Environment:
-            - Name: FLASK_APP
-              Value: "app.py"
-            - Name: FLASK_ENV
-              Value: "production"
-
-  # Create ECS Service
-  ECSService:
-    Type: AWS::ECS::Service
-    Properties:
-      Cluster: !Ref ECSCluster
-      DesiredCount: 2
-      TaskDefinition: !Ref ECSContainerDefinition
-      LaunchType: FARGATE
-      NetworkConfiguration:
-        AwsvpcConfiguration:
-          Subnets:
-            - Ref: PublicSubnet
-          SecurityGroups:
-            - Ref: ECSSecurityGroup
-          AssignPublicIp: ENABLED
-
-  # Create Security Group for ECS tasks
-  ECSSecurityGroup:
+  # Create a Security Group for ECS Tasks
+  DonthiECSSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: ECS task security group
-      VpcId: !Ref MyVPC
+      GroupDescription: "Allow inbound HTTP/HTTPS traffic for ECS tasks"
+      VpcId: !Ref DonthiVPC
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: '-1'
       SecurityGroupIngress:
-        - IpProtocol: tcp
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: tcp
           FromPort: '80'
           ToPort: '80'
-          CidrIp: '0.0.0.0/0'
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: tcp
+          FromPort: '443'
+          ToPort: '443'
 
-  # Create ALB
-  ApplicationLoadBalancer:
+  # Create Application Load Balancer (ALB)
+  DonthiALB:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Name: MyALB-Donthi
+      Name: "DonthiALB"
       Subnets:
-        - Ref: PublicSubnet
+        - Ref: DonthiPublicSubnet
       SecurityGroups:
-        - Ref: ALBSecurityGroup
+        - Ref: DonthiECSSecurityGroup
       Scheme: internet-facing
       LoadBalancerAttributes:
         - Key: idle_timeout.timeout_seconds
           Value: '60'
+      Tags:
+        - Key: Name
+          Value: "DonthiALB"
 
-  # ALB Target Group
-  ALBTargetGroup:
+  # Create Target Group for ECS Tasks
+  DonthiALBTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
-      Name: FlaskAppTargetGroup-Donthi
+      Name: "DonthiALBTargetGroup"
       Port: 80
       Protocol: HTTP
-      VpcId: !Ref MyVPC
-      TargetType: ip
+      VpcId: !Ref DonthiVPC
+      HealthCheckPath: '/'
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 3
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: 200-299
 
-  # ALB Listener
-  ALBListener:
-    Type: AWS::ElasticLoadBalancingV2::Listener
+  # Create ECS Cluster
+  DonthiECSCluster:
+    Type: AWS::ECS::Cluster
     Properties:
-      DefaultActions:
-        - Type: fixed-response
-          FixedResponseConfig:
-            StatusCode: 200
-            MessageBody: "Hello from Donthi ECS Container!"
-            ContentType: text/plain
-      LoadBalancerArn: !Ref ApplicationLoadBalancer
-      Port: 80
-      Protocol: HTTP
+      ClusterName: "DonthiECSCluster"
 
-  # Auto Scaling Configuration
-  ECSAutoScalingPolicy:
+  # ECS Task Definition
+  DonthiTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: "DonthiTaskDefinition"
+      ExecutionRoleArn: arn:aws:iam::897729119415:role/ecsTaskExecutionRole
+      ContainerDefinitions:
+        - Name: "DonthiAppContainer"
+          Image: "897729119415.dkr.ecr.us-east-1.amazonaws.com/donthiapp:latest"
+          Essential: true
+          PortMappings:
+            - ContainerPort: 80
+              HostPort: 80
+
+  # ECS Service
+  DonthiECSService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref DonthiECSCluster
+      TaskDefinition: !Ref DonthiTaskDefinition
+      DesiredCount: 2
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets:
+            - Ref: DonthiPrivateSubnet
+          SecurityGroups:
+            - Ref: DonthiECSSecurityGroup
+          AssignPublicIp: ENABLED
+      LoadBalancers:
+        - TargetGroupArn: !Ref DonthiALBTargetGroup
+          ContainerName: "DonthiAppContainer"
+          ContainerPort: 80
+
+  # Create Auto Scaling for ECS Service
+  DonthiServiceAutoScaling:
     Type: AWS::ApplicationAutoScaling::ScalableTarget
     Properties:
-      MaxCapacity: 10
+      MaxCapacity: 5
       MinCapacity: 1
-      ResourceId: !Sub "service/${ECSCluster}/${ECSService}"
+      ResourceId: !Sub "service/${DonthiECSCluster}/${DonthiECSService}"
       ScalableDimension: ecs:service:DesiredCount
       ServiceNamespace: ecs
+      PolicyName: "DonthiScalingPolicy"
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: 50
+        ScaleInCooldown: 300
+        ScaleOutCooldown: 300
 
 Outputs:
-  VPCId:
-    Value: !Ref MyVPC
-  ECSClusterName:
-    Value: !Ref ECSCluster
-  ALBUrl:
-    Value: !Sub "http://${ApplicationLoadBalancer.DNSName}"
+  LoadBalancerDNSName:
+    Description: "The DNS name of the Application Load Balancer"
+    Value: !GetAtt DonthiALB.DNSName

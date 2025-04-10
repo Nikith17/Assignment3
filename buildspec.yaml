@@ -1,14 +1,20 @@
 version: 0.2
+
 phases:
   install:
     runtime-versions:
       docker: 18
   build:
     commands:
-      - docker build -t donthi/flask-app .
-      - docker tag donthi/flask-app:latest 897729119415.dkr.ecr.us-east-1.amazonaws.com/donthiapp:latest
+      # Log in to Amazon ECR (replace with your AWS region)
       - $(aws ecr get-login --no-include-email --region us-east-1)
+      
+      # Build the Docker image
+      - docker build -t 897729119415.dkr.ecr.us-east-1.amazonaws.com/donthiapp:latest .
+      
+      # Push the Docker image to ECR
       - docker push 897729119415.dkr.ecr.us-east-1.amazonaws.com/donthiapp:latest
+      
 artifacts:
   files:
     - '**/*'

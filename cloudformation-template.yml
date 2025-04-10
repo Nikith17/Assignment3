@@ -1,0 +1,165 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  VPCName:
+    Type: String
+    Default: "CustomVPC-Donthi"
+  SubnetCIDRPublic:
+    Type: String
+    Default: '10.0.1.0/24'
+  SubnetCIDRPrivate:
+    Type: String
+    Default: '10.0.2.0/24'
+  InstanceType:
+    Type: String
+    Default: t3.micro
+Resources:
+  # Create a Custom VPC
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: '10.0.0.0/16'
+      Tags:
+        - Key: Name
+          Value: !Ref VPCName
+
+  # Create Public Subnet
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: !Ref SubnetCIDRPublic
+      AvailabilityZone: us-east-1a
+      MapPublicIpOnLaunch: true
+
+  # Create Private Subnet
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: !Ref SubnetCIDRPrivate
+      AvailabilityZone: us-east-1a
+
+  # Create Internet Gateway
+  MyInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties: 
+      Tags:
+        - Key: Name
+          Value: MyInternetGateway
+
+  # Attach Internet Gateway to VPC
+  AttachInternetGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref MyVPC
+      InternetGatewayId: !Ref MyInternetGateway
+
+  # Create ECS Cluster
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: ECSCluster-Donthi
+
+  # Create ECS Task Definition
+  ECSContainerDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: ECSFlaskApp-Donthi
+      ExecutionRoleArn: arn:aws:iam::123456789012:role/ecsTaskExecutionRole
+      ContainerDefinitions:
+        - Name: flask-app
+          Image: "897729119415.dkr.ecr.us-east-1.amazonaws.com/donthiapp:latest"
+          Memory: 512
+          Cpu: 256
+          PortMappings:
+            - ContainerPort: 80
+              HostPort: 80
+          Environment:
+            - Name: FLASK_APP
+              Value: "app.py"
+            - Name: FLASK_ENV
+              Value: "production"
+
+  # Create ECS Service
+  ECSService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref ECSCluster
+      DesiredCount: 2
+      TaskDefinition: !Ref ECSContainerDefinition
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets:
+            - Ref: PublicSubnet
+          SecurityGroups:
+            - Ref: ECSSecurityGroup
+          AssignPublicIp: ENABLED
+
+  # Create Security Group for ECS tasks
+  ECSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ECS task security group
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: '0.0.0.0/0'
+
+  # Create ALB
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: MyALB-Donthi
+      Subnets:
+        - Ref: PublicSubnet
+      SecurityGroups:
+        - Ref: ALBSecurityGroup
+      Scheme: internet-facing
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '60'
+
+  # ALB Target Group
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: FlaskAppTargetGroup-Donthi
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref MyVPC
+      TargetType: ip
+
+  # ALB Listener
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: 200
+            MessageBody: "Hello from Donthi ECS Container!"
+            ContentType: text/plain
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  # Auto Scaling Configuration
+  ECSAutoScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity: 10
+      MinCapacity: 1
+      ResourceId: !Sub "service/${ECSCluster}/${ECSService}"
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+
+Outputs:
+  VPCId:
+    Value: !Ref MyVPC
+  ECSClusterName:
+    Value: !Ref ECSCluster
+  ALBUrl:
+    Value: !Sub "http://${ApplicationLoadBalancer.DNSName}"
